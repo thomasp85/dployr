@@ -22,3 +22,5 @@ Suggests:
     shiny
 Imports: 
     pkgload
+URL: https://github.com/thomasp85/dployr
+BugReports: https://github.com/thomasp85/dployr/issues
