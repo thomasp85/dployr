@@ -7,20 +7,23 @@ Authors@R: c(
     person("Posit Software, PBC", role = c("cph", "fnd"),
            comment = c(ROR = "03wc8by49"))
   )
-Description: Provides a low-dependency package for the part of
+Description: Provides a low-dependency package for the parts of
     'producethis' that are required at runtime.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2
-Suggests: 
+Suggests:
     blogdown,
     bookdown,
+    knitr,
     plumber,
     quarto,
     rmarkdown,
     shiny
-Imports: 
-    pkgload
+Imports:
+    pkgload,
+    utils,
+    yaml
 URL: https://github.com/thomasp85/dployr
 BugReports: https://github.com/thomasp85/dployr/issues

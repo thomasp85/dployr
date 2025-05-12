@@ -4,6 +4,48 @@
 #' created according to producethis conventions. If this is the case it will
 #' execute the project according to its type and the content in `./exec`
 #'
+#' ## Project categories
+#' producethis/deployr recognises three main project types:
+#'
+#' * `static`: The project is executed and as a result produces one or more
+#'   files which will subsequently be made availabe
+#' * `dynamic`: The project is executed and as a result starts a web server with
+#'   dynamic content
+#' * `batch`: The project is executed and is afterwards considered "finished".
+#'   If information is generated it needs to be stored somewhere else.
+#'
+#' Inside these categories are a range of types that maps to specific runtimes
+#' or execution engines. The project type is given in the `Type` field of the
+#' `DESCRIPTION` file
+#'
+#' ### static
+#' * `quarto`: Used for a single quarto document or a quarto project. Will use
+#'   `quarto::quarto_render()` to render the content of `exec/`
+#' * `rmarkdown`: Used for a single RMarkdown document. Will use
+#'   `rmarkdown::render()` to render the `.Rmd` file in `exec/`
+#' * `book` Used for a bookdown project. Will use `bookdown::render_book()` to
+#'   render the content of `exec/`
+#' * `blog` Used for a blogdown project. Will use `blogdown::build_site()` to
+#'   render the content of `exec/`
+#' * `site` Used for general Rmarkdown websites. Will use
+#'   `rmarkdown::render_site()` to render the content of `exec/`
+#'
+#' ### dynamic
+#' * `shiny`: Used for a shiny app. Will use `shiny::shinyAppDir()` to create a
+#'   shiny app from `exec/` and then launch it with `shiny::runApp()`
+#' * `plumber`: Used for a plumber API. Will use `plumber::plumb()` to create an
+#'   api from `exec/` and launch it with `plumber::pr_run()`
+#' * `api`/`app`: Used for a generalized app or api. Will require a
+#'   `_server.yml` file to specify how to launch it
+#' * `rmd_shiny`: Used for a shiny-backed Rmarkdown document. Will use
+#'   `rmarkdown::run()` to render and serve a dynamic document
+#' * `quarto_shiny`: Used for a shiny-backed Quarto document. Will use
+#'   `quarto::quarto_serve()` to render and serve a dynamic document.
+#'
+#' ### batch
+#' * `batch`: Batch project which will run each script in `exec/` in turn and
+#'   then quit.
+#'
 #' @return This function is called for its side effects
 #'
 #' @export
@@ -20,21 +62,20 @@ execute <- function() {
 
   desc <- as.list(read.dcf("DESCRIPTION")[1, ])
   type <- get_type(desc)
+  config <- config_get()
   if (!is.null(desc$ExecFun)) {
-    execute_fun(desc, type)
-  } else if (file.exists("exec/_server.yml")) {
-    execute_server(desc, type)
+    execute_fun(desc, type, config)
   } else {
     switch(
       type,
-      batch = execute_batch(desc),
-      dynamic = execute_dynamic(desc),
-      static = execute_static(desc)
+      batch = execute_batch(desc, config),
+      dynamic = execute_dynamic(desc, config),
+      static = execute_static(desc, config)
     )
   }
 }
 
-execute_fun <- function(desc) {
+execute_fun <- function(desc, type, config) {
   exec_fun <- get0(desc$ExecFun, mode = "function")
   if (is.null(exec_fun)) {
     stop(
@@ -48,62 +89,45 @@ execute_fun <- function(desc) {
   exec_fun()
 }
 
-execute_server <- function(desc) {
-  srvyml <- "exec/_server.yml"
-  engine <- grep(
-    "^engine:",
-    readLines(srvyml),
-    ignore.case = TRUE,
-    value = TRUE
+execute_batch <- function(desc, config) {
+  scripts <- list.files("exec", full.names = TRUE, recursive = TRUE)
+  scripts <- scripts[grep("\\.R$", scripts, ignore.case = TRUE)]
+  message(
+    "Project contains ",
+    length(scripts),
+    " script",
+    if (length(scripts) > 1) "s"
   )
-  engine <- trimws(sub("^engine:(.*)", "\\1", engine, ignore.case = TRUE))
-
-  require_package(
-    engine,
-    "is not available. The package specified as `engine` in `_server.yml` must be installed"
-  )
-
-  engine_fun <- get0("launch_server", asNamespace(engine), mode = "function")
-  if (is.null(engine_fun)) {
-    stop(
-      "The `",
-      engine,
-      "` package does not contain a `launch_server()` function",
-      call. = FALSE
-    )
-  }
-
-  message("Creating ", type, " based on `./exec/_server.yml`")
-  engine_fun(srvyml)
-}
-
-execute_batch <- function(desc) {
-  if (!is.null(desc$ExecFun)) {
-    execute_fun(desc)
-  } else {
-    scripts <- list.files("exec", full.names = TRUE, recursive = TRUE)
-    scripts <- scripts[grep("\\.R$", scripts, ignore.case = TRUE)]
-    message(
-      "Project contains ",
-      length(scripts),
-      " script",
-      if (length(scripts) > 1) "s"
-    )
-    for (script in scripts) {
-      message("Executing '", script, "'")
-      source(script)
-    }
+  for (script in scripts) {
+    message("Executing '", script, "'")
+    source(script)
   }
 }
 
-execute_dynamic <- function(desc) {
+execute_dynamic <- function(desc, config) {
   options(shiny.autoload.r = FALSE)
-  # TODO: How does port, host, etc get passed from execution env to this call
 
-  if (!is.null(desc$ExecFun)) {
-    execute_fun(desc)
-  } else if (file.exists("exec/_server.yml")) {
-    execute_server(desc)
+  if (file.exists("exec/_server.yml")) {
+    srvyml <- "exec/_server.yml"
+    engine <- yaml::read_yaml(srvyml)$engine
+
+    require_package(
+      engine,
+      "is not available. The package specified as `engine` in `_server.yml` must be installed"
+    )
+
+    engine_fun <- get0("launch_server", asNamespace(engine), mode = "function")
+    if (is.null(engine_fun)) {
+      stop(
+        "The `",
+        engine,
+        "` package does not contain a `launch_server()` function",
+        call. = FALSE
+      )
+    }
+
+    message("Creating ", desc$Type, " based on `./exec/_server.yml`")
+    engine_fun(srvyml, port = config$port, host = config$host)
   } else if (tolower(desc$Type) == "shiny") {
     require_package("shiny")
 
@@ -111,7 +135,10 @@ execute_dynamic <- function(desc) {
 
     shiny::runApp(
       shiny::shinyAppDir("exec/"),
-      launch.browser = FALSE
+      launch.browser = FALSE,
+      port = config$port,
+      host = config$host,
+      workerId = config$workerId
     )
   } else if (tolower(desc$Type) == "plumber") {
     require_package("plumber")
@@ -124,31 +151,38 @@ execute_dynamic <- function(desc) {
         logical(1)
       )]
     } else {
-      contact <- as.person(desc$Maintainer)
+      contact <- utils::as.person(desc$Maintainer)
     }
 
-    plumber::plumb(dir = "exec/") |>
-      plumber::pr_set_api_spec(
-        function(spec) {
-          spec$info$title <- desc$Title
-          spec$info$description <- desc$Description
-          spec$info$version <- desc$Version
-          spec$info$contact <- list(
-            name = paste(contact$given, contact$family),
-            url = desc$BugReports,
-            email = contact$email
-          )
-          spec
-        }
-      ) |>
-      plumber::pr_run()
+    pr <- plumber::plumb(dir = "exec/")
+    pr <- plumber::pr_set_api_spec(pr, function(spec) {
+      spec$info$title <- desc$Title
+      spec$info$description <- desc$Description
+      spec$info$version <- desc$Version
+      spec$info$contact <- list(
+        name = paste(contact$given, contact$family),
+        url = desc$BugReports,
+        email = contact$email
+      )
+      spec
+    })
+    plumber::pr_run(pr, host = config$host, port = config$port)
   } else if (tolower(desc$Type) == "rmd_shiny") {
     require_package("rmarkdown")
     require_package("shiny")
 
     rmarkdown::run(
       file = NULL,
-      dir = "exec"
+      dir = "exec",
+      shiny_args = list(
+        port = config$port,
+        host = config$host,
+        workerId = config$workerId
+      ),
+      render_args = list(
+        envir = globalenv()
+      ),
+      auto_reload = FALSE
     )
   } else if (tolower(desc$Type) == "quarto_shiny") {
     require_package("quarto")
@@ -156,7 +190,10 @@ execute_dynamic <- function(desc) {
 
     quarto::quarto_serve(
       "exec/index.qmd",
-      browse = FALSE
+      render = TRUE,
+      browse = FALSE,
+      port = config$port,
+      host = config$host
     )
   } else {
     # Shouldn't happen
@@ -164,7 +201,7 @@ execute_dynamic <- function(desc) {
   }
 }
 
-execute_static <- function(desc) {
+execute_static <- function(desc, config) {
   output <- NULL
   is_quarto <- file.exists("exec/_quarto.yml") ||
     tolower(desc$Type) == "quarto" ||
@@ -193,23 +230,46 @@ execute_static <- function(desc) {
       "exec/_quarto-deployr.yml"
     )
 
-    quarto::quarto_render("exec", quarto_args = "--profile dployr")
+    quarto::quarto_render(
+      "exec",
+      profile = "dployr",
+      output_format = config$staticFormat,
+      execute_params = config$params,
+      quarto_args = config$quartoArgs,
+      pandoc_args = config$pandocArgs
+    )
 
     output <- "exec/dployr_dist/"
   } else if (tolower(desc$Type) == "book") {
     require_package("bookdown")
+    require_package("knitr")
 
-    bookdown::render_book("exec", output_dir = "dist")
+    knitr::opts_chunk$set(warning = FALSE, error = FALSE)
+
+    bookdown::render_book(
+      "exec",
+      output_dir = "dist",
+      output_format = config$staticFormat
+    )
   } else if (tolower(desc$Type) == "blog") {
     require_package("blogdown")
+    require_package("knitr")
+
+    knitr::opts_chunk$set(warning = FALSE, error = FALSE)
 
     setwd("exec")
-    blogdown::build_site(build_rmd = TRUE)
+    blogdown::build_site(build_rmd = TRUE, hugo_args = config$hugoArgs)
     setwd("../")
 
     output <- "exec/public/"
-  } else if (file.exists("exec/_site.yml") || tolower(desc$Type) %in% c("website", "site")) {
+  } else if (
+    file.exists("exec/_site.yml") ||
+      tolower(desc$Type) %in% c("website", "site")
+  ) {
     require_package("rmarkdown")
+    require_package("knitr")
+
+    knitr::opts_chunk$set(warning = FALSE, error = FALSE)
 
     if (!file.exists("exec/_site.yml")) {
       stop("Missing `_site.yml` file in `./exec/`. Aborting execution")
@@ -223,13 +283,20 @@ execute_static <- function(desc) {
     }
     writeLines(settings, "exec/_site.yml")
 
-    rmarkdown::render_site("exec")
+    rmarkdown::render_site(
+      "exec",
+      output_format = config$staticFormat,
+      envir = globalenv()
+    )
 
     output <- "exec/dployr_dist/"
   } else if (
     tolower(desc$Type) %in% c("rmarkdown", "report", "document", "doc")
   ) {
     require_package("rmarkdown")
+    require_package("knitr")
+
+    knitr::opts_chunk$set(warning = FALSE, error = FALSE)
 
     input <- grep(
       "\\.(r|md|rmd)$",
@@ -243,11 +310,20 @@ execute_static <- function(desc) {
       )
     }
 
-    rmarkdown::render(input[1], output_dir = "dist")
+    rmarkdown::render(
+      input[1],
+      output_dir = "dist",
+      output_format = config$staticFormat,
+      params = config$params,
+      envir = globalenv()
+    )
+  } else {
+    # Shouldn't happen
+    stop("Unknown static project type: ", desc$Type)
   }
 
   if (!is.null(output)) {
-    dir.create("dist")
+    dir.create(config$distDir, showWarnings = FALSE, recursive = TRUE)
     file.copy(
       list.files(
         output,
@@ -255,7 +331,7 @@ execute_static <- function(desc) {
         all.files = TRUE,
         no.. = TRUE
       ),
-      "dist/",
+      config$distDir,
       recursive = TRUE
     )
   }

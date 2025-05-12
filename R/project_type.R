@@ -23,6 +23,6 @@ get_type <- function(desc) {
     static = "static",
     script = ,
     batch = "batch",
-    stop("Unknown project type: '", type, "'. Aborting execution")
+    stop("Unknown project type: '", desc$Type, "'. Aborting execution")
   )
 }
