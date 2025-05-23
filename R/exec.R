@@ -4,48 +4,6 @@
 #' created according to producethis conventions. If this is the case it will
 #' execute the project according to its type and the content in `./exec`
 #'
-#' ## Project categories
-#' producethis/deployr recognises three main project types:
-#'
-#' * `static`: The project is executed and as a result produces one or more
-#'   files which will subsequently be made availabe
-#' * `dynamic`: The project is executed and as a result starts a web server with
-#'   dynamic content
-#' * `batch`: The project is executed and is afterwards considered "finished".
-#'   If information is generated it needs to be stored somewhere else.
-#'
-#' Inside these categories are a range of types that maps to specific runtimes
-#' or execution engines. The project type is given in the `Type` field of the
-#' `DESCRIPTION` file
-#'
-#' ### static
-#' * `quarto`: Used for a single quarto document or a quarto project. Will use
-#'   `quarto::quarto_render()` to render the content of `exec/`
-#' * `rmarkdown`: Used for a single RMarkdown document. Will use
-#'   `rmarkdown::render()` to render the `.Rmd` file in `exec/`
-#' * `book` Used for a bookdown project. Will use `bookdown::render_book()` to
-#'   render the content of `exec/`
-#' * `blog` Used for a blogdown project. Will use `blogdown::build_site()` to
-#'   render the content of `exec/`
-#' * `site` Used for general Rmarkdown websites. Will use
-#'   `rmarkdown::render_site()` to render the content of `exec/`
-#'
-#' ### dynamic
-#' * `shiny`: Used for a shiny app. Will use `shiny::shinyAppDir()` to create a
-#'   shiny app from `exec/` and then launch it with `shiny::runApp()`
-#' * `plumber`: Used for a plumber API. Will use `plumber::plumb()` to create an
-#'   api from `exec/` and launch it with `plumber::pr_run()`
-#' * `api`/`app`: Used for a generalized app or api. Will require a
-#'   `_server.yml` file to specify how to launch it
-#' * `rmd_shiny`: Used for a shiny-backed Rmarkdown document. Will use
-#'   `rmarkdown::run()` to render and serve a dynamic document
-#' * `quarto_shiny`: Used for a shiny-backed Quarto document. Will use
-#'   `quarto::quarto_serve()` to render and serve a dynamic document.
-#'
-#' ### batch
-#' * `batch`: Batch project which will run each script in `exec/` in turn and
-#'   then quit.
-#'
 #' @return This function is called for its side effects
 #'
 #' @export
@@ -204,7 +162,7 @@ execute_dynamic <- function(desc, config) {
 execute_static <- function(desc, config) {
   output <- NULL
   is_quarto <- file.exists("exec/_quarto.yml") ||
-    tolower(desc$Type) == "quarto" ||
+    tolower(desc$Type) %in% c("quarto", "website", "blog", "book", "manuscript", "report") ||
     any(grepl("\\.qmd$", list.files("exec"), ignore.case = TRUE))
 
   if (is_quarto) {
@@ -212,10 +170,12 @@ execute_static <- function(desc, config) {
 
     if (!file.exists("exec/_quarto.yml")) {
       # Promote to quarto project
+      type <- tolower(desc$Type)
+      if (type == "quarto") type <- "default"
       writeLines(
         c(
           "project:",
-          "  type: default"
+          paste0("  type: ", type)
         ),
         "exec/_quarto.yml"
       )
@@ -227,7 +187,7 @@ execute_static <- function(desc, config) {
         "project:",
         "  output-dir: dployr_dist"
       ),
-      "exec/_quarto-deployr.yml"
+      "exec/_quarto-dployr.yml"
     )
 
     quarto::quarto_render(
@@ -240,7 +200,7 @@ execute_static <- function(desc, config) {
     )
 
     output <- "exec/dployr_dist/"
-  } else if (tolower(desc$Type) == "book") {
+  } else if (tolower(desc$Type) == "rmd_book") {
     require_package("bookdown")
     require_package("knitr")
 
@@ -251,7 +211,7 @@ execute_static <- function(desc, config) {
       output_dir = "dist",
       output_format = config$staticFormat
     )
-  } else if (tolower(desc$Type) == "blog") {
+  } else if (tolower(desc$Type) == "rmd_blog") {
     require_package("blogdown")
     require_package("knitr")
 
@@ -262,10 +222,7 @@ execute_static <- function(desc, config) {
     setwd("../")
 
     output <- "exec/public/"
-  } else if (
-    file.exists("exec/_site.yml") ||
-      tolower(desc$Type) %in% c("website", "site")
-  ) {
+  } else if (tolower(desc$Type) == "rmd_website") {
     require_package("rmarkdown")
     require_package("knitr")
 
@@ -290,9 +247,7 @@ execute_static <- function(desc, config) {
     )
 
     output <- "exec/dployr_dist/"
-  } else if (
-    tolower(desc$Type) %in% c("rmarkdown", "report", "document", "doc")
-  ) {
+  } else if (tolower(desc$Type) == "rmd_report") {
     require_package("rmarkdown")
     require_package("knitr")
 
@@ -317,6 +272,8 @@ execute_static <- function(desc, config) {
       params = config$params,
       envir = globalenv()
     )
+  } else if (tolower(desc$Type) == "static") {
+    execute_batch(desc, config)
   } else {
     # Shouldn't happen
     stop("Unknown static project type: ", desc$Type)

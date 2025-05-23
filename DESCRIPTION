@@ -18,6 +18,7 @@ Suggests:
     bookdown,
     knitr,
     plumber,
+    plumber2,
     quarto,
     rmarkdown,
     shiny
